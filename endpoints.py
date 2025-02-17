@@ -231,7 +231,7 @@ def search_songs():
     # if not token or not is_token_valid(token):
     #     return jsonify({"error": "Invalid or expired token"}), 401
     
-    top_k=request.json.get('top_k', 2)
+    top_k=request.json.get('top_k', 10)
 
     song_title = request.json.get('title')
     song_artist = request.json.get('artist')
