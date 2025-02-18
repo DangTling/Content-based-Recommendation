@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import numpy as np
 import psycopg2
 from apscheduler.schedulers.background import BackgroundScheduler
+import psycopg2.pool
 from sentence_transformers import SentenceTransformer
 import ipaddress
 import datetime
@@ -23,22 +24,16 @@ PG_SCHEMA = os.getenv("DB_SCHEMA")
 PG_TABLE = "song"
 
 def connect_postgres():
-    return psycopg2.connect(
+    pg_pool = psycopg2.pool.SimpleConnectionPool(
+        minconn=1,  
+        maxconn=10,  
         host=PG_HOST,
         port=PG_PORT,
         user=PG_USER,
         password=PG_PASSWORD,
         database=PG_DATABASE
     )
-
-def connect_postgresVector():
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST_VECTOR"),
-        port=os.getenv("DB_PORT_VECTOR"),
-        user=os.getenv("DB_USER_VECTOR"),
-        password=os.getenv("DB_PASSWORD_VECTOR"),
-        database=os.getenv("DB_NAME_VECTOR"),
-    )
+    return pg_pool.getconn()
 
 def fetch_songs_from_db():
     conn = connect_postgres()
@@ -49,7 +44,7 @@ def fetch_songs_from_db():
     rows = cursor.fetchall()
     conn.close()
 
-    conn = connect_postgresVector()
+    conn = connect_postgres()
     cursor = conn.cursor()
     cursor.execute("SELECT song_id, updated_at FROM recommendation.song_embeddings")
     existing_songs = cursor.fetchall()
@@ -81,7 +76,7 @@ def fetch_songs_from_db():
         tags_vector = model.encode(tags)
 
         query_vector = np.hstack([title_vector, category_vector, description_vector, artist_vector, tags_vector])
-        conn = connect_postgresVector()
+        conn = connect_postgres()
         cursor = conn.cursor()
         query = """
             UPDATE recommendation.song_embeddings
@@ -103,7 +98,7 @@ def fetch_songs_from_db():
 
         query_vector = np.hstack([title_vector, category_vector, description_vector, artist_vector, tags_vector])
 
-        conn = connect_postgresVector()
+        conn = connect_postgres()
         cursor = conn.cursor()
         query = """
             INSERT INTO recommendation.song_embeddings (song_id, title, artist, category, description, tags, embedding, updated_at)
@@ -193,7 +188,7 @@ def fetch_and_store_songs():
             query_vector = vector['vector']
             payload = vector['payload']
 
-            conn2 = connect_postgresVector()
+            conn2 = connect_postgres()
             cursor2 = conn2.cursor()
             cursor2.execute("""
                 INSERT INTO recommendation.song_embeddings (song_id, title, artist, category, description, tags, embedding, updated_at)
@@ -267,13 +262,13 @@ def search_songs():
 
     query_vector = np.hstack([title_artist_vector, category_vector, description_vector, author_vector, tags_vector])
 
-    conn = connect_postgresVector()
+    conn = connect_postgres()
     cursor = conn.cursor()
 
-    cursor.execute('SET search_path TO cms;')
+    cursor.execute('SET search_path TO recommendation;')
     cursor.execute("""
         SELECT song_id, title, artist, category, description, tags, embedding
-        FROM cms.song_embeddings
+        FROM recommendation.song_embeddings
         ORDER BY embedding <=> CAST(%s AS vector(1920))
         LIMIT %s;
     """, (query_vector.tolist(), top_k))
