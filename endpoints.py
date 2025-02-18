@@ -2,11 +2,8 @@ from flask import Flask, request, jsonify
 import numpy as np
 import psycopg2
 from apscheduler.schedulers.background import BackgroundScheduler
-from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
-from qdrant_client.http import models
 import ipaddress
-import jwt
 import datetime
 from dotenv import load_dotenv
 import os
@@ -54,7 +51,7 @@ def fetch_songs_from_db():
 
     conn = connect_postgresVector()
     cursor = conn.cursor()
-    cursor.execute("SELECT song_id, updated_at FROM cms.song_embeddings")
+    cursor.execute("SELECT song_id, updated_at FROM recommendation.song_embeddings")
     existing_songs = cursor.fetchall()
     existing_ids = {song_id: updated_at for song_id, updated_at in existing_songs}
     conn.close()
@@ -87,7 +84,7 @@ def fetch_songs_from_db():
         conn = connect_postgresVector()
         cursor = conn.cursor()
         query = """
-            UPDATE cms.song_embeddings
+            UPDATE recommendation.song_embeddings
             SET embedding = %s, updated_at = %s
             WHERE song_id = %s
         """
@@ -109,8 +106,8 @@ def fetch_songs_from_db():
         conn = connect_postgresVector()
         cursor = conn.cursor()
         query = """
-        INSERT INTO cms.song_embeddings (song_id, title, artist, category, description, tags, embedding, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO recommendation.song_embeddings (song_id, title, artist, category, description, tags, embedding, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
         cursor.execute(query, (song_id, title, artist, categories, description, tags, query_vector.tolist(), str(updated_at)))
         conn.commit()
@@ -124,7 +121,7 @@ def initialize_postgres():
     cursor.execute("""
     CREATE EXTENSION IF NOT EXISTS vector;
 
-    CREATE TABLE IF NOT EXISTS cms.song_embeddings (
+    CREATE TABLE IF NOT EXISTS recommendation.song_embeddings (
         song_id SERIAL PRIMARY KEY,
         title VARCHAR(255),
         artist VARCHAR(255),
@@ -199,7 +196,7 @@ def fetch_and_store_songs():
             conn2 = connect_postgresVector()
             cursor2 = conn2.cursor()
             cursor2.execute("""
-                INSERT INTO cms.song_embeddings (song_id, title, artist, category, description, tags, embedding, updated_at)
+                INSERT INTO recommendation.song_embeddings (song_id, title, artist, category, description, tags, embedding, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (song_id) 
                 DO UPDATE SET embedding = EXCLUDED.embedding, updated_at = EXCLUDED.updated_at;
@@ -211,71 +208,6 @@ def fetch_and_store_songs():
                 payload['description'],
                 payload['tags'],
                 query_vector,  # Assuming the vector is stored in the correct format
-                payload['updated_at']
-            ))
-            conn2.commit()
-            conn2.close()
-        print(f"Inserted {len(vectors)} songs into PG-Vector.")
-
-    conn = connect_postgres()
-    cursor = conn.cursor()
-
-    query = f"SELECT s.id AS song_id,s.title AS song_title, s.description as song_description,a.name AS artist_name,STRING_AGG(DISTINCT c.name, ', ') AS categories,STRING_AGG(DISTINCT t.name, ', ') AS tags, s.updated_at FROM cms.song s LEFT JOIN cms.artist a ON s.artist_id = a.id LEFT JOIN cms.song_category sc ON s.draft_id = sc.draft_song_id  LEFT JOIN cms.category c ON sc.category_id  = c.id LEFT JOIN cms.tag_song ts ON s.draft_id  = ts.draft_song_id  LEFT JOIN cms.tag t ON ts.tag_id  = t.id where s.type = 'SONG'  GROUP BY s.id, s.title, a.name;"
-    cursor.execute(query)
-    rows = cursor.fetchall()
-    conn.close()
-
-    if not rows:
-        print("No songs found in the database.")
-        return
-
-    vectors = []
-    for row in rows:
-        song_id, title, description, artist, category, tags, updated_at = row
-
-        title_vector = model.encode(title)
-        description_vector = model.encode(description)
-        artist_vector = model.encode(artist)
-        category_vector = model.encode(category)
-        tags_vector = model.encode(tags)
-
-        query_vector = np.hstack([title_vector, category_vector, description_vector, artist_vector, tags_vector])
-
-        vectors.append({
-            'id': song_id,
-            'vector': query_vector.tolist(),
-            'payload': {
-                'title': title,
-                'artist_name': artist,
-                'category_name': category,
-                'description': description,
-                'tags': tags,
-                'updated_at': str(updated_at),
-                'id': str(song_id)
-            }
-        })
-
-    if vectors:
-        for vector in vectors:
-            song_id = vector['id']
-            query_vector = vector['vector']
-            payload = vector['payload']
-
-            conn2 = connect_postgresVector()
-            cursor2 = conn2.cursor()
-            cursor2.execute("""
-            INSERT INTO cms.song_embeddings (song_id, title, artist, category, description, tags, embedding, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (song_id) 
-            DO UPDATE SET embedding = EXCLUDED.embedding, updated_at = EXCLUDED.updated_at;
-            """, (
-                song_id,
-                payload['title'],
-                payload['artist_name'],
-                payload['category_name'],
-                payload['description'],
-                payload['tags'],
-                query_vector,
                 payload['updated_at']
             ))
             conn2.commit()

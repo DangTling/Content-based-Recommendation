@@ -1,0 +1,7 @@
+Flask==3.0.3
+numpy
+psycopg2-binary
+apscheduler
+sentence-transformers
+python-dotenv
+pyjwt
